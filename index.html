@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Prototipo AES + RSA</title>
+<style>
+:root{--bg:#f3f5f2;--card:#fff;--ink:#1c2420;--mut:#5d6b64;--line:#d3dad5;--acc:#1f6f5c;--accfg:#fff;--bad:#a12b2b;--badbg:#fbeaea;--ok:#1d6b3a;--okbg:#e6f4ea;--warn:#8a5a00;--warnbg:#fff3d6;--code:#eef2ef;
+box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#121715;--card:#1b221f;--ink:#e6ece8;--mut:#9aa8a1;--line:#2f3a35;--acc:#4fb89f;--accfg:#0d1512;--bad:#ff9b9b;--badbg:#3a1f1f;--ok:#8fdca8;--okbg:#18301f;--warn:#f2c46b;--warnbg:#3a2e12;--code:#141a17}}
+:root[data-theme="dark"]{--bg:#121715;--card:#1b221f;--ink:#e6ece8;--mut:#9aa8a1;--line:#2f3a35;--acc:#4fb89f;--accfg:#0d1512;--bad:#ff9b9b;--badbg:#3a1f1f;--ok:#8fdca8;--okbg:#18301f;--warn:#f2c46b;--warnbg:#3a2e12;--code:#141a17}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.55 Georgia,"Times New Roman",serif}
+main{max-width:860px;margin:0 auto;padding:24px 16px 56px}
+h1{font-size:1.9rem;margin:0 0 4px;letter-spacing:-.01em}
+h2{font-size:1.15rem;margin:0 0 8px}
+p{margin:0 0 10px}
+.sub{color:var(--mut);margin-bottom:20px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:6px;padding:16px;margin-bottom:16px}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+@media(max-width:640px){.grid{grid-template-columns:1fr}}
+label{font-family:system-ui,sans-serif;font-size:.9rem;display:block;margin-bottom:4px}
+textarea{width:100%;box-sizing:border-box;font:inherit;padding:8px;border:1px solid var(--line);border-radius:4px;background:var(--bg);color:var(--ink);min-height:70px}
+.opt{display:flex;gap:8px;align-items:flex-start;font-family:system-ui,sans-serif;font-size:.9rem;margin:10px 0}
+.opt input{margin-top:4px}
+button{font:600 .95rem system-ui,sans-serif;background:var(--acc);color:var(--accfg);border:0;border-radius:4px;padding:10px 16px;cursor:pointer}
+button.sec{background:transparent;color:var(--acc);border:1px solid var(--acc)}
+button:focus-visible,textarea:focus-visible,input:focus-visible{outline:3px solid var(--acc);outline-offset:2px}
+pre{font:12px/1.4 ui-monospace,Menlo,Consolas,monospace;background:var(--code);padding:8px;border-radius:4px;margin:6px 0;overflow-x:auto;white-space:pre-wrap;word-break:break-all;max-height:140px;overflow-y:auto}
+.step{border-left:4px solid var(--acc);padding:2px 0 2px 12px;margin:0 0 16px}
+.step.bad{border-color:var(--bad)}.step.ok{border-color:var(--ok)}.step.warn{border-color:var(--warn)}
+.step h3{font-size:1rem;margin:0 0 4px}
+.tag{display:inline-block;font:600 .85rem system-ui,sans-serif;padding:3px 8px;border-radius:4px}
+.tag.ok{background:var(--okbg);color:var(--ok)}.tag.bad{background:var(--badbg);color:var(--bad)}.tag.warn{background:var(--warnbg);color:var(--warn)}
+.note{font-size:.9rem;color:var(--mut)}
+.fp{font:12px ui-monospace,Menlo,Consolas,monospace}
+</style>
+</head>
+<body>
+<main>
+<h1>Prototipo de cifrado AES + RSA</h1>
+<p class="sub">Cifrado híbrido AES - RSA.</p>
+
+<section class="card">
+<h2>1. Claves RSA-2048</h2>
+<p class="note">B es el receptor. C es el intermediario que se usa en la demostración del ataque. Un único par de claves RSA sirve para cifrar y para firmar.</p>
+<div class="grid">
+<div><label>Clave pública de B (KP)</label><pre id="bpub">Generando…</pre><div class="fp" id="bfp"></div></div>
+<div><label>Clave privada de B (Kp), no se comparte</label><pre id="bpriv">Generando…</pre></div>
+</div>
+<p style="margin-top:12px"><button class="sec" id="regen">Generar claves nuevas</button></p>
+</section>
+
+<section class="card">
+<h2>2. Enviar un mensaje de A a B</h2>
+<label for="msg">Mensaje de A</label>
+<textarea id="msg">Transferencia aprobada por $15,000. Confirmar mañana.</textarea>
+<div class="opt"><input type="checkbox" id="tamper"><label for="tamper" style="margin:0">Alterar el mensaje antes de verificar la firma (comprueba la autenticación)</label></div>
+<div class="opt"><input type="checkbox" id="mitm"><label for="mitm" style="margin:0">Activar ataque de intermediario: C reemplaza la clave pública de B por la suya</label></div>
+<button id="run">Cifrar y enviar</button>
+</section>
+
+<section class="card" id="out" aria-live="polite" hidden>
+<h2>Resultado paso a paso</h2>
+<div id="steps"></div>
+</section>
+
+<section class="card">
+<h2>Cómo funciona</h2>
+<p><strong>Confidencialidad.</strong> B envía su clave pública a A. A genera una clave de sesión AES-256, cifra el mensaje con ella y cifra esa clave con la clave pública de B (RSA-OAEP). Solo B puede recuperarla con su clave privada. Los algoritmos asimétricos son lentos, por eso solo se usan para la clave de sesión.</p>
+<p><strong>Autenticación.</strong> B calcula el resumen SHA-256 del mensaje y lo cifra con su clave privada (firma digital). A recalcula el resumen y lo compara con el que obtiene al descifrar la firma con la clave pública de B.</p>
+<p><strong>Ataque de intermediario.</strong> Si C logra que A reciba una clave pública falsa, puede leer, volver a cifrar y reenviar todo sin que nadie lo note. La defensa es verificar que la clave pública pertenece realmente a B, por ejemplo comparando su huella o con firmas de terceros de confianza.</p>
+</section>
+</main>
+
+<script>
+const te=new TextEncoder(),td=new TextDecoder(),S=crypto.subtle;
+const $=id=>document.getElementById(id);
+const b64=b=>btoa(String.fromCharCode(...new Uint8Array(b)));
+const hex=b=>[...new Uint8Array(b)].map(x=>x.toString(16).padStart(2,'0')).join('');
+const pem=(b,t)=>`-----BEGIN ${t}-----\n${b64(b).match(/.{1,64}/g).join('\n')}\n-----END ${t}-----`;
+const fp=async s=>hex(await S.digest('SHA-256',s)).match(/.{2}/g).slice(0,12).join(':');
+const SIG={name:'RSASSA-PKCS1-v1_5',hash:'SHA-256'};
+let B,C;
+
+async function newPair(){
+  const k=await S.generateKey({name:'RSA-OAEP',modulusLength:2048,publicExponent:new Uint8Array([1,0,1]),hash:'SHA-256'},true,['encrypt','decrypt']);
+  const spki=await S.exportKey('spki',k.publicKey),p8=await S.exportKey('pkcs8',k.privateKey);
+  return {spki,p8,pub:k.publicKey,priv:k.privateKey,fp:await fp(spki),
+    vpub:await S.importKey('spki',spki,SIG,false,['verify']),
+    spriv:await S.importKey('pkcs8',p8,SIG,false,['sign'])};
+}
+async function gen(){
+  $('run').disabled=true;
+  [B,C]=await Promise.all([newPair(),newPair()]);
+  $('bpub').textContent=pem(B.spki,'PUBLIC KEY');
+  $('bpriv').textContent=pem(B.p8,'PRIVATE KEY');
+  $('bfp').textContent='Huella: '+B.fp;
+  $('run').disabled=false;
+}
+
+function step(t,cls,parts){
+  const d=document.createElement('div');d.className='step '+(cls||'');
+  const h=document.createElement('h3');h.textContent=t;d.appendChild(h);
+  for(const p of parts){
+    const e=document.createElement(p.pre?'pre':'p');
+    if(p.tag){const s=document.createElement('span');s.className='tag '+p.tag;s.textContent=p.text;e.appendChild(s)}
+    else{e.textContent=p.text;if(!p.pre)e.className='note'}
+    d.appendChild(e);
+  }
+  $('steps').appendChild(d);
+}
+
+async function run(){
+  const m=$('msg').value.trim();if(!m||!B)return;
+  const mitm=$('mitm').checked,tamper=$('tamper').checked;
+  $('steps').innerHTML='';$('out').hidden=false;
+  try{
+    const K=mitm?C:B; // clave pública que recibe A
+
+    step('1. B envía su clave pública a A', mitm?'warn':'',[
+      {text:'Huella de la clave de B: '+B.fp,pre:1},
+      ...(mitm?[{text:'C intercepta el envío y entrega a A su propia clave KC. Huella que A recibe: '+C.fp,pre:1},
+                {tag:'warn',text:'Las huellas no coinciden: A tendría que detectar el engaño comparándolas.'}]:[])
+    ]);
+
+    const aes=await S.generateKey({name:'AES-GCM',length:256},true,['encrypt','decrypt']);
+    const iv=crypto.getRandomValues(new Uint8Array(12));
+    const ct=await S.encrypt({name:'AES-GCM',iv},aes,te.encode(m));
+    const raw=await S.exportKey('raw',aes);
+    let ek=await S.encrypt({name:'RSA-OAEP'},K.pub,raw);
+    step('2. A cifra el mensaje (AES-256-GCM) y la clave de sesión (RSA-OAEP)','',[
+      {text:'Clave de sesión AES (A la conserva en secreto): '+b64(raw),pre:1},
+      {text:'Mensaje cifrado con AES: '+b64(ct),pre:1},
+      {text:'Clave de sesión cifrada con RSA: '+b64(ek),pre:1}
+    ]);
+
+    if(mitm){
+      const r2=await S.decrypt({name:'RSA-OAEP'},C.priv,ek);
+      const k2=await S.importKey('raw',r2,'AES-GCM',false,['decrypt']);
+      const leak=td.decode(await S.decrypt({name:'AES-GCM',iv},k2,ct));
+      ek=await S.encrypt({name:'RSA-OAEP'},B.pub,r2);
+      step('3. C intercepta, descifra y reenvía a B','bad',[
+        {tag:'bad',text:'C leyó el mensaje'},
+        {text:leak,pre:1},
+        {text:'C vuelve a cifrar la clave de sesión con la clave real de B, así que B no nota nada.'}
+      ]);
+    }
+
+    const rawB=await S.decrypt({name:'RSA-OAEP'},B.priv,ek);
+    const igual=b64(rawB)===b64(raw);
+    step('4. B descifra la clave AES con RSA (usa su clave privada)','ok',[
+      {text:'Clave AES recuperada: '+b64(rawB),pre:1},
+      igual?{tag:'ok',text:'Coincide con la clave de sesión que generó A'}:{tag:'bad',text:'No coincide con la clave de A'}
+    ]);
+    const kB=await S.importKey('raw',rawB,'AES-GCM',false,['decrypt']);
+    const plain=td.decode(await S.decrypt({name:'AES-GCM',iv},kB,ct));
+    step('5. B descifra el mensaje con AES usando la clave recuperada','ok',[
+      {text:plain,pre:1},{tag:'ok',text:'Mensaje recuperado'}
+    ]);
+
+    // Autenticación
+    const signer=mitm?C:B;
+    const sig=await S.sign(SIG,signer.spriv,te.encode(m));
+    const recibido=tamper?m+' [modificado]':m;
+    const rOrig=hex(await S.digest('SHA-256',te.encode(m)));
+    const rRec=hex(await S.digest('SHA-256',te.encode(recibido)));
+    const valid=await S.verify(SIG,K.vpub,sig,te.encode(recibido));
+    const parts=[
+      {text:'Resumen r(m) firmado por '+(mitm?'C':'B')+' con su clave privada: '+rOrig,pre:1},
+      {text:'Firma digital: '+b64(sig),pre:1},
+      {text:'Resumen r′(m) que calcula A sobre lo recibido: '+rRec,pre:1},
+      valid?{tag:'ok',text:'Firma válida: el mensaje es auténtico'}:{tag:'bad',text:'Firma inválida: el mensaje fue alterado'}
+    ];
+    if(mitm&&valid)parts.push({tag:'warn',text:'A cree que el mensaje viene de B, pero lo firmó C. Sin verificar la clave pública, la firma no prueba la identidad.'});
+    step('6. A verifica la firma con la clave pública que tiene',valid?(mitm?'warn':'ok'):'bad',parts);
+  }catch(e){
+    step('Error','bad',[{text:String(e.message||e)}]);
+  }
+}
+$('run').onclick=run;
+$('regen').onclick=gen;
+gen();
+</script>
+</body>
+</html>
